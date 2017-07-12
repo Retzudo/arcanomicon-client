@@ -1,6 +1,6 @@
 import os
 import appdirs
-from urllib.parse import urljoin
+from requests.compat import urljoin
 import configparser
 
 
@@ -37,4 +37,5 @@ BASE_URL = CONFIG.get('BaseUrl', DEFAULT_BASE_URL)
 URLS = {
     'auth': urljoin(BASE_URL, 'jwt-auth'),
     'favourites': urljoin(BASE_URL, 'favourites'),
+    'add_on_details': urljoin(BASE_URL, 'addons/{id}'),
 }
