@@ -106,9 +106,9 @@ class AddOnDatabase:
 
     def update(self, add_on):
         """Update an installed add-on."""
+        logging.debug('Checking if {} needs an update.'.format(add_on))
         add_on_id = add_on.id
         latest_version_info = self._fetch_info(add_on_id)
-        logging.debug('Checking if {} needs an update.'.format(add_on))
 
         if add_on.version != latest_version_info['latest_version']['version']:
             logging.debug(
@@ -120,6 +120,8 @@ class AddOnDatabase:
             )
             self.uninstall(add_on)
             self.install(latest_version_info)
+        else:
+            logging.debug('{} does not need an update'.format(add_on))
 
     def update_all(self):
         """Updated all installed add-ons."""
