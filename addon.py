@@ -1,10 +1,12 @@
+import json
 import os
+import shutil
 import tempfile
+from zipfile import ZipFile
 
 import requests
 
 import settings
-import json
 
 
 class AddOn:
@@ -13,19 +15,15 @@ class AddOn:
     id: The add-on's ID on the server
     name: The add-on's name
     version: the installed version
-    paths: List of directories that are installed
-    settings_paths: List of directories/files that contain add-on settings"""
-    def __init__(self, id, name, version, paths=None, settings_paths=None):
+    paths: List of directories that are installed"""
+    def __init__(self, add_on_id, name, version, paths=None):
         if not paths:
             paths = []
-        if not settings_paths:
-            settings_paths = []
 
-        self.id = id
+        self.id = add_on_id
         self.name = name
         self.version = version
         self.paths = paths
-        self.settings_paths = settings_paths
 
     def __eq__(self, other):
         return (self.name, self.version) == (other.name, other.version)
@@ -33,84 +31,119 @@ class AddOn:
     def __str__(self, *args, **kwargs):
         return self.name
 
-    def to_json(self):
-        return json.dumps(self.__dict__)
-
     @classmethod
     def from_dict(cls, dct):
         try:
             return cls(
-                id=dct['id'],
+                add_on_id=dct['id'],
                 name=dct['name'],
-                version=dct['version'],
-                paths=dct['paths'],
-                settings_paths=dct['settings_paths'],
+                version=dct.get('version', None),
+                paths=dct.get('paths', []),
             )
         except KeyError as e:
             raise ValueError('Invalid dict for AddOn') from e
 
 
-def fetch_add_on_data(add_on_id):
-    """Fetch an add-on dataa from the server."""
-    url = settings.URLS['add_on_details'].format(id=add_on_id)
+class AddOnDatabase:
+    def __init__(self, db_path, add_ons_path, add_ons=None):
+        if not add_ons:
+            add_ons = []
 
-    try:
-        return requests.get(url).json()
-    except requests.HTTPError as e:
-        raise RuntimeError('Could not fetch add-on for id {}'.format(add_on_id)) from e
+        if not os.path.exists(db_path):
+            raise ValueError('{} is not a file'.format(db_path))
 
+        if not os.path.isdir(add_ons_path):
+            raise ValueError('{} does not exist'.format(add_ons_path))
 
-def get_installed_add_ons():
-    """Return a list of installed add-ons."""
-    add_ons = []
-    with open(settings.FILES['database']) as f:
-        data = json.load(f)
-        for add_on in data:
-            add_ons.append(AddOn.from_dict(add_on))
+        self.db_path = db_path
+        self.add_ons_path = add_ons_path
+        self.add_ons = add_ons
 
-    return add_ons
+    def __len__(self):
+        return len(self.add_ons)
 
+    def load(self):
+        """Load all installed add-ons from the database file."""
+        with open(self.db_path) as f:
+            try:
+                data = json.load(f)
+            except json.decoder.JSONDecodeError as e:
+                raise RuntimeError('Could not parse database file') from e
+            for add_on in data:
+                self.add_ons.append(AddOn.from_dict(add_on))
 
-def download_to_file(url, file_handler):
-    """Download the given file at `url` to `filehandler`."""
-    stream = requests.get(url, stream=True)
+    def save(self):
+        """Save the list of installed add-ons back to the database file."""
+        json_data = json.dumps([add_on.__dict__ for add_on in self.add_ons])
+        with open(self.db_path, 'w') as f:
+            f.write(json_data)
 
-    for chunk in stream.iter_content(chunk_size=1024):
-        if chunk:
-            file_handler.write(chunk)
+    @staticmethod
+    def _fetch_info(add_on_id):
+        """Fetch info about an add-on from the server."""
+        url = settings.URLS['add_on_details'].format(id=add_on_id)
 
+        try:
+            return requests.get(url).json()
+        except requests.HTTPError as e:
+            raise RuntimeError('Could not fetch add-on for id {}'.format(add_on_id)) from e
 
-def update_installed_add_ons():
-    """Update all installed add-ons to the latest version.
+    @staticmethod
+    def _download_to_file(url, file_handler):
+        """Download the file from the URL to the file handler."""
+        stream = requests.get(url, stream=True)
 
-    Update the database file if successful."""
+        # TODO check for 404
 
+        for chunk in stream.iter_content(chunk_size=1024):
+            if chunk:
+                file_handler.write(chunk)
 
-def install_add_on(add_on_id):
-    """Download and extract the latest version of the add-on with the specified ID.
+    def update(self, add_on):
+        """Update an installed add-on."""
+        add_on_id = add_on.id
+        latest_version_info = self._fetch_info(add_on_id)
 
-    Update the database file if successful."""
-    data = fetch_add_on_data(add_on_id)
+        if add_on.version != latest_version_info['latest_version']['version']:
+            self.uninstall(add_on)
+            self.install(latest_version_info)
 
-    temp_zip_file = tempfile.mkstemp(suffix='.zip')
-    with open(temp_zip_file) as f:
-        download_to_file(data['latest_version']['url'], f)
+    def update_all(self):
+        """Updated all installed add-ons."""
+        for add_on in self.add_ons:
+            self.update(add_on)
 
-    # TODO unzip, move dirs, set paths on AddOn object
+    def install_by_id(self, add_on_id):
+        """Install an add-on with the given ID.
 
+        Fetches the latest version from the server."""
+        info = self._fetch_info(add_on_id)
+        self.install(info)
 
-def remove_add_on(add_on, with_settings=False):
-    """Remove all directories of an add-on.
+    def install(self, latest_version_info):
+        """Installs an add-on from add-on info retrieved with _fetch_info."""
+        with tempfile.TemporaryFile(suffix='.zip') as f:
+            self._download_to_file(latest_version_info['latest_version']['file'], f)
 
-     Update the database file if successful."""
-    for path in add_on.paths:
-        full_path = os.path.join(settings.CONFIG.get('AddOnsDir'), path)
-        os.removedirs(full_path)
+            add_on = AddOn.from_dict(latest_version_info)
+            add_on.version = latest_version_info['latest_version']['version']
 
-    if with_settings:
-        for settings_path in add_on.settings_paths:
-            full_path = os.path.realpath(os.path.join(settings.CONFIG.get('AddOnsDir'), '../WTF/', settings_path))
-            if os.path.isfile(full_path):
-                os.remove(full_path)
-            elif os.path.isdir(full_path):
-                os.removedirs(full_path)
+            with ZipFile(f) as zip_file:
+                add_on.paths = zip_file.namelist()
+                zip_file.extractall(path=self.add_ons_path)
+
+            self.add_ons.append(add_on)
+
+    def uninstall(self, add_on):
+        """Uninstalls an add-on by remove related files.
+
+        Does *not* remove add-on settings in the WTF directory."""
+        """Remove all directories of an add-on."""
+        for path in add_on.paths:
+            full_path = os.path.join(self.add_ons_path, path)
+            try:
+                shutil.rmtree(full_path)
+            except FileNotFoundError:
+                pass
+
+        self.add_ons.remove(add_on)

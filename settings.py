@@ -15,7 +15,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 FILES = {
     'settings': os.path.join(CONFIG_DIR, 'settings.ini'),
     'token': os.path.join(CONFIG_DIR, 'token.txt'),
-    'database': os.path.join(DATA_DIR, 'database.txt'),
+    'database': os.path.join(DATA_DIR, 'database.json'),
 }
 
 

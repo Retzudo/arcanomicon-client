@@ -1,12 +1,18 @@
-from addon import get_installed_add_ons
+import settings
+from addon import AddOnDatabase
 
 
 def main():
-    add_ons = get_installed_add_ons()
-    print('Add-ons:', add_ons)
+    db = AddOnDatabase(
+        db_path=settings.FILES['database'],
+        add_ons_path=settings.CONFIG['InterfaceDir']
+    )
 
-    for add_on in add_ons:
-        print('DB line:', add_on.to_database_line())
+    db.load()
+    db.update_all()
+    db.save()
+
+    # db.uninstall(db.add_ons[0])
 
 
 if __name__ == '__main__':
